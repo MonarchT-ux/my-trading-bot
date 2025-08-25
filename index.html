@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Sophisticated Trading Dashboard</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #1a1a1a;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      display: flex;
+    }
+    #sidebar {
+      width: 250px;
+      background-color: #2b2b2b;
+      padding: 20px;
+      box-sizing: border-box;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    #sidebar h2 {
+      text-align: center;
+      margin-top: 0;
+      margin-bottom: 30px;
+    }
+    .nav-item {
+      padding: 15px;
+      margin-bottom: 10px;
+      background-color: #3a3a3a;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+    .nav-item:hover {
+      background-color: #555;
+    }
+    .nav-item.active {
+      background-color: #007bff;
+      font-weight: bold;
+    }
+    #main-content {
+      flex-grow: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+    }
+    .chart-page {
+      display: none;
+      flex-grow: 1;
+      flex-direction: column;
+    }
+    .chart-page.active {
+      display: flex;
+    }
+    .chart-container {
+      flex-grow: 1;
+      width: 100%;
+      height: 70vh;
+    }
+    .trading-controls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px 0;
+      background-color: #2b2b2b;
+      border-radius: 8px;
+      margin-top: 20px;
+      gap: 15px;
+    }
+    .trading-controls button {
+      padding: 12px 24px;
+      font-size: 16px;
+      font-weight: bold;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+    .trading-controls button:hover {
+      transform: scale(1.05);
+    }
+    .buy-btn {
+      background-color: #28a745;
+      color: white;
+    }
+    .sell-btn {
+      background-color: #dc3545;
+      color: white;
+    }
+    .info-panel {
+      background-color: #3a3a3a;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    .info-panel h3 {
+      margin: 0;
+      margin-bottom: 10px;
+    }
+    .trade-input {
+        padding: 10px;
+        border-radius: 5px;
+        border: 1px solid #555;
+        background-color: #2b2b2b;
+        color: #fff;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="sidebar">
+    <h2>Currency Pairs</h2>
+    <div id="nav-list"></div>
+  </div>
+
+  <div id="main-content">
+    <div id="pages-container"></div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+
+  <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
+  
+  <script>
+    const chartElements = {};
+    const charts = {};
+    const candlestickSeries = {};
+    const maSeries = {}; 
+    const volumeSeries = {};
+    const macdSeries = {};
+    const macdSignalSeries = {};
+    const macdHistogramSeries = {};
+    const history = {};
+    const lastPrice = {};
+    
+    // RSI Chart setup
+    let rsiChart = null;
+    let rsiSeries = null;
+    
+    // MACD Chart setup
+    let macdChart = null;
+    
+    const socket = io();
+    
+    socket.on('connect', () => {
+      console.log('Connected to server, waiting for symbol list...');
+    });
+    
+    socket.on('initial_symbols', (symbols) => {
+        console.log('Received symbols:', symbols);
+        const navList = document.getElementById('nav-list');
+        const pagesContainer = document.getElementById('pages-container');
+
+        navList.innerHTML = '';
+        pagesContainer.innerHTML = '';
+        
+        // Create RSI chart and its container once
+        const rsiChartElement = document.createElement('div');
+        rsiChartElement.id = 'rsi-chart-container';
+        rsiChartElement.className = 'chart-container';
+        const rsiPage = document.createElement('div');
+        rsiPage.className = 'chart-page';
+        rsiPage.id = 'rsi-page';
+        const rsiTitle = document.createElement('h2');
+        rsiTitle.textContent = 'RSI Indicator';
+        rsiPage.appendChild(rsiTitle);
+        rsiPage.appendChild(rsiChartElement);
+        pagesContainer.appendChild(rsiPage);
+
+        rsiChart = LightweightCharts.createChart(rsiChartElement, {
+            width: rsiChartElement.offsetWidth,
+            height: rsiChartElement.offsetHeight,
+            layout: {
+                background: { color: '#1a1a1a' },
+                textColor: '#fff',
+            },
+            grid: {
+                vertLines: { color: 'rgba(255, 255, 255, 0.1)' },
+                horzLines: { color: 'rgba(255, 255, 255, 0.1)' },
+            },
+            rightPriceScale: {
+                visible: true,
+                ticksVisible: true,
+            },
+            timeScale: {
+                timeVisible: true,
+                secondsVisible: false,
+            },
+        });
+        rsiSeries = rsiChart.addLineSeries({
+            color: '#FF6D00',
+            lineWidth: 2,
+        });
+        rsiChart.addLineSeries({
+            color: '#838383',
+            lineWidth: 1,
+            lineStyle: 2,
+            data: [{ time: 0, value: 70 }, { time: Date.now() / 1000, value: 70 }],
+            crosshairMarkerVisible: false,
+        });
+        rsiChart.addLineSeries({
+            color: '#838383',
+            lineWidth: 1,
+            lineStyle: 2,
+            data: [{ time: 0, value: 30 }, { time: Date.now() / 1000, value: 30 }],
+            crosshairMarkerVisible: false,
+        });
+
+        // Create MACD chart and its container
+        const macdChartElement = document.createElement('div');
+        macdChartElement.id = 'macd-chart-container';
+        macdChartElement.className = 'chart-container';
+        const macdPage = document.createElement('div');
+        macdPage.className = 'chart-page';
+        macdPage.id = 'macd-page';
+        const macdTitle = document.createElement('h2');
+        macdTitle.textContent = 'MACD Indicator';
+        macdPage.appendChild(macdTitle);
+        macdPage.appendChild(macdChartElement);
+        pagesContainer.appendChild(macdPage);
+
+        macdChart = LightweightCharts.createChart(macdChartElement, {
+            width: macdChartElement.offsetWidth,
+            height: macdChartElement.offsetHeight,
+            layout: {
+                background: { color: '#1a1a1a' },
+                textColor: '#fff',
+            },
+            grid: {
+                vertLines: { color: 'rgba(255, 255, 255, 0.1)' },
+                horzLines: { color: 'rgba(255, 255, 255, 0.1)' },
+            },
+            rightPriceScale: {
+                visible: true,
+                ticksVisible: true,
+            },
+            timeScale: {
+                timeVisible: true,
+                secondsVisible: false,
+            },
+        });
+        macdSeries.macd = macdChart.addLineSeries({ color: '#2962FF', lineWidth: 2 });
+        macdSeries.signal = macdChart.addLineSeries({ color: '#FF6D00', lineWidth: 2 });
+        macdSeries.histogram = macdChart.addHistogramSeries({ priceScaleId: '', color: 'rgba(0, 150, 136, 0.8)' });
+        
+        symbols.forEach((symbol, index) => {
+            // Create navigation item
+            const navItem = document.createElement('div');
+            navItem.className = 'nav-item';
+            navItem.textContent = symbol;
+            navList.appendChild(navItem);
+
+            // Create page for the chart
+            const chartPage = document.createElement('div');
+            chartPage.className = 'chart-page';
+            chartPage.id = symbol.replace(/:/g, '-');
+            
+            // Add info panel
+            const infoPanel = document.createElement('div');
+            infoPanel.className = 'info-panel';
+            infoPanel.innerHTML = `
+                <h3>${symbol}</h3>
+                <p><strong>Current Price:</strong> <span id="${symbol.replace(/:/g, '-')}-price">--</span></p>
+                <p><strong>Trading Signal:</strong> <span id="${symbol.replace(/:/g, '-')}-signal">--</span></p>
+                <p><strong>Status:</strong> <span id="${symbol.replace(/:/g, '-')}-status">No Trade</span></p>
+            `;
+            chartPage.appendChild(infoPanel);
+            
+            const chartContainer = document.createElement('div');
+            chartContainer.className = 'chart-container';
+            chartPage.appendChild(chartContainer);
+
+            // Add trading controls
+            const tradingControls = document.createElement('div');
+            tradingControls.className = 'trading-controls';
+            tradingControls.innerHTML = `
+                <input type="number" id="${symbol.replace(/:/g, '-')}-sl" class="trade-input" placeholder="Stop Loss">
+                <input type="number" id="${symbol.replace(/:/g, '-')}-tp" class="trade-input" placeholder="Take Profit">
+                <button class="buy-btn" data-symbol="${symbol}">BUY</button>
+                <button class="sell-btn" data-symbol="${symbol}">SELL</button>
+            `;
+            chartPage.appendChild(tradingControls);
+            pagesContainer.appendChild(chartPage);
+
+            // Initialize Lightweight Chart for the new container
+            const chart = LightweightCharts.createChart(chartContainer, {
+                width: chartContainer.offsetWidth,
+                height: chartContainer.offsetHeight,
+                layout: {
+                    background: { color: '#1a1a1a' },
+                    textColor: '#fff',
+                },
+                grid: {
+                    vertLines: { color: 'rgba(255, 255, 255, 0.1)' },
+                    horzLines: { color: 'rgba(255, 255, 255, 0.1)' },
+                },
+                timeScale: {
+                    timeVisible: true,
+                    secondsVisible: false,
+                },
+            });
+
+            charts[symbol] = chart;
+            candlestickSeries[symbol] = chart.addCandlestickSeries();
+            history[symbol] = [];
+            
+            maSeries[symbol] = chart.addLineSeries({
+                color: '#2962FF',
+                lineWidth: 2,
+                crosshairMarkerVisible: false,
+            });
+            volumeSeries[symbol] = chart.addHistogramSeries({
+                priceScaleId: '',
+                color: '#26a69a',
+                lineWidth: 2,
+                priceFormat: {
+                    type: 'volume',
+                },
+                overlay: true,
+            });
+
+            // Set up click handler for navigation
+            navItem.addEventListener('click', () => {
+                showPage(chartPage.id);
+            });
+            
+            // Set up trade button click handlers
+            chartPage.querySelector('.buy-btn').addEventListener('click', (e) => handleTrade(e, 'BUY'));
+            chartPage.querySelector('.sell-btn').addEventListener('click', (e) => handleTrade(e, 'SELL'));
+
+            if (index === 0) {
+                showPage(chartPage.id);
+            }
+        });
+
+        // Add RSI to navigation
+        const rsiNavItem = document.createElement('div');
+        rsiNavItem.className = 'nav-item';
+        rsiNavItem.textContent = 'RSI Indicator';
+        navList.appendChild(rsiNavItem);
+        rsiNavItem.addEventListener('click', () => {
+            showPage('rsi-page');
+        });
+
+        // Add MACD to navigation
+        const macdNavItem = document.createElement('div');
+        macdNavItem.className = 'nav-item';
+        macdNavItem.textContent = 'MACD Indicator';
+        navList.appendChild(macdNavItem);
+        macdNavItem.addEventListener('click', () => {
+            showPage('macd-page');
+        });
+    });
+
+    const tradeStatus = {};
+
+    function handleTrade(event, type) {
+        const symbol = event.target.dataset.symbol;
+        const entryPrice = parseFloat(document.getElementById(`${symbol.replace(/:/g, '-')}-price`).textContent);
+        const stopLoss = parseFloat(document.getElementById(`${symbol.replace(/:/g, '-')}-sl`).value);
+        const takeProfit = parseFloat(document.getElementById(`${symbol.replace(/:/g, '-')}-tp`).value);
+
+        if (isNaN(entryPrice)) {
+            alert('Cannot place trade, no price data available.');
+            return;
+        }
+
+        tradeStatus[symbol] = { type, entryPrice, stopLoss, takeProfit };
+        
+        // Send a message to the server to manage the trade
+        socket.emit('set_trade_levels', { symbol, type, entryPrice, stopLoss, takeProfit });
+
+        document.getElementById(`${symbol.replace(/:/g, '-')}-status`).textContent = `Trade Active: ${type}`;
+        document.getElementById(`${symbol.replace(/:/g, '-')}-status`).style.color = type === 'BUY' ? '#28a745' : '#dc3545';
+        alert(`Trade placed for ${symbol}. Stop Loss: ${stopLoss}, Take Profit: ${takeProfit}`);
+    }
+
+    function showPage(pageId) {
+        document.querySelectorAll('.chart-page').forEach(page => {
+            page.classList.remove('active');
+        });
+        document.getElementById(pageId).classList.add('active');
+        
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.classList.remove('active');
+        });
+        const navItem = document.querySelector(`.nav-item[textContent='${pageId.replace('-', ':')}']`) || document.querySelector(`.nav-item[textContent='${pageId === 'rsi-page' ? 'RSI Indicator' : 'MACD Indicator'}']`);
+        if (navItem) {
+            navItem.classList.add('active');
+        }
+
+        const activePage = document.getElementById(pageId);
+        if (activePage) {
+            const chartContainer = activePage.querySelector('.chart-container');
+            if (chartContainer) {
+              const symbol = pageId.replace('-', ':');
+              if (charts[symbol]) {
+                  charts[symbol].applyOptions({
+                      width: chartContainer.offsetWidth,
+                      height: chartContainer.offsetHeight,
+                  });
+              }
+            } else if (pageId === 'rsi-page' && rsiChart) {
+                rsiChart.applyOptions({
+                    width: rsiChartElement.offsetWidth,
+                    height: rsiChartElement.offsetHeight,
+                });
+            } else if (pageId === 'macd-page' && macdChart) {
+                macdChart.applyOptions({
+                    width: macdChartElement.offsetWidth,
+                    height: macdChartElement.offsetHeight,
+                });
+            }
+        }
+    }
+
+    const priceHistoryForIndicators = {};
+    const macdData = {};
+    
+    socket.on('live_data', (data) => {
+        const formattedData = {
+            time: data.time / 1000,
+            open: data.price,
+            high: data.price,
+            low: data.price,
+            close: data.price,
+        };
+        
+        if (!priceHistoryForIndicators[data.symbol]) {
+            priceHistoryForIndicators[data.symbol] = [];
+        }
+        priceHistoryForIndicators[data.symbol].push(formattedData);
+        if (priceHistoryForIndicators[data.symbol].length > 26) {
+            priceHistoryForIndicators[data.symbol].shift();
+        }
+
+        if (candlestickSeries[data.symbol]) {
+            candlestickSeries[data.symbol].update(formattedData);
+            document.getElementById(`${data.symbol.replace(/:/g, '-')}-price`).textContent = data.price.toFixed(4);
+            
+            const volumeColor = lastPrice[data.symbol] && data.price > lastPrice[data.symbol] 
+                ? 'rgba(0, 150, 136, 0.8)'
+                : 'rgba(255, 82, 82, 0.8)';
+            const volumeData = {
+                time: formattedData.time,
+                value: data.volume,
+                color: volumeColor,
+            };
+            volumeSeries[data.symbol].update(volumeData);
+            
+            lastPrice[data.symbol] = data.price;
+        }
+
+        // Calculate and update RSI
+        const rsiValue = calculateRSI(priceHistoryForIndicators[data.symbol]);
+        if (rsiValue !== null) {
+            rsiSeries.update({
+                time: formattedData.time,
+                value: rsiValue
+            });
+        }
+
+        // Calculate and update MACD
+        if (priceHistoryForIndicators[data.symbol].length >= 26) {
+            const macd = calculateMACD(priceHistoryForIndicators[data.symbol]);
+            if (macd) {
+                if (!macdData[data.symbol]) {
+                    macdData[data.symbol] = { macdLine: [], signalLine: [], histogram: [] };
+                }
+                const macdEntry = { time: formattedData.time, value: macd.macdLine };
+                const signalEntry = { time: formattedData.time, value: macd.signalLine };
+                const histogramEntry = { time: formattedData.time, value: macd.histogram, color: macd.histogram > 0 ? 'rgba(0, 150, 136, 0.8)' : 'rgba(255, 82, 82, 0.8)' };
+
+                macdSeries.macd.update(macdEntry);
+                macdSeries.signal.update(signalEntry);
+                macdSeries.histogram.update(histogramEntry);
+            }
+        }
+    });
+    
+    socket.on('trading_signal', (data) => {
+      const signalElement = document.getElementById(`${data.symbol.replace(/:/g, '-')}-signal`);
+      if (signalElement) {
+        signalElement.textContent = data.signal;
+        if (data.signal === 'BUY') {
+          signalElement.style.color = '#28a745';
+        } else if (data.signal === 'SELL') {
+          signalElement.style.color = '#dc3545';
+        } else if (data.signal === 'TAKE PROFIT') {
+          signalElement.style.color = '#00aaff';
+          document.getElementById(`${data.symbol.replace(/:/g, '-')}-status`).textContent = 'Trade Closed';
+          alert(`TAKE PROFIT hit for ${data.symbol}`);
+        } else if (data.signal === 'STOP LOSS') {
+          signalElement.style.color = '#ff6600';
+          document.getElementById(`${data.symbol.replace(/:/g, '-')}-status`).textContent = 'Trade Closed';
+          alert(`STOP LOSS hit for ${data.symbol}`);
+        }
+      }
+    });
+
+    function calculateRSI(data) {
+      const rsiPeriod = 14;
+      if (data.length < rsiPeriod) return null; 
+
+      let gains = [];
+      let losses = [];
+      for (let i = 1; i < data.length; i++) {
+        const change = data[i].close - data[i - 1].close;
+        gains.push(Math.max(0, change));
+        losses.push(Math.max(0, -change));
+      }
+
+      const avgGain = gains.reduce((sum, gain) => sum + gain, 0) / gains.length;
+      const avgLoss = losses.reduce((sum, loss) => sum + loss, 0) / losses.length;
+
+      if (avgLoss === 0) return 100;
+      
+      const rs = avgGain / avgLoss;
+      const rsi = 100 - (100 / (1 + rs));
+      return rsi;
+    }
+
+    function calculateEMA(data, period) {
+      if (data.length < period) return null;
+      const multiplier = 2 / (period + 1);
+      let ema = 0;
+      let sum = 0;
+      for (let i = 0; i < period; i++) {
+        sum += data[i].close;
+      }
+      ema = sum / period;
+      for (let i = period; i < data.length; i++) {
+        ema = (data[i].close - ema) * multiplier + ema;
+      }
+      return ema;
+    }
+
+    function calculateMACD(data) {
+      const shortPeriod = 12;
+      const longPeriod = 26;
+      const signalPeriod = 9;
+
+      if (data.length < longPeriod) return null;
+
+      const shortEMA = calculateEMA(data, shortPeriod);
+      const longEMA = calculateEMA(data, longPeriod);
+      
+      if (shortEMA === null || longEMA === null) return null;
+
+      const macdLine = shortEMA - longEMA;
+
+      const macdHistoryData = [];
+      for(let i = 0; i < data.length; i++) {
+        if(i >= longPeriod - 1) {
+            const subArray = data.slice(0, i+1);
+            const short = calculateEMA(subArray, shortPeriod);
+            const long = calculateEMA(subArray, longPeriod);
+            if (short && long) {
+                macdHistoryData.push({ time: data[i].time, value: short - long });
+            }
+        }
+      }
+
+      if (macdHistoryData.length < signalPeriod) return null;
+
+      const signalLine = calculateEMA(macdHistoryData.map(d => ({close: d.value})), signalPeriod);
+      const histogram = macdLine - signalLine;
+
+      return { macdLine, signalLine, histogram };
+    }
+
+    window.addEventListener('resize', () => {
+        showPage(document.querySelector('.chart-page.active').id);
+    });
+  </script>
+</body>
+</html>
